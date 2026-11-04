@@ -7,7 +7,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Literal
-from .engine import profile,recommendations,write_json,read_json,clean,finalize,run_lock,resolve_metric
+from .engine import profile,recommendations,write_json,read_json,clean,finalize,run_lock,normalize_features,resolve_metric
 from .catalog import GRAPHS,FAMILIES,SPECS
 ROOT=Path(os.environ.get('SKLEARN_ANALYSIS_DIR',str(Path(__file__).resolve().parents[2]/'analysis_data')));ROOT.mkdir(exist_ok=True,parents=True)
 router=APIRouter(prefix='/api/analysis');jobs={};job_lock=threading.Lock();slots=threading.Semaphore(2)
@@ -233,7 +233,7 @@ def predict(id:str,body:Predict):
     missing=set(meta['features'])-set(frame.columns)
     if missing:raise HTTPException(400,f'不足列：{sorted(missing)}')
     try:
-        features=frame[meta['features']]
+        features=normalize_features(frame[meta['features']].copy())
         if config['task']=='reduction':
             if not hasattr(model.named_steps['model'],'transform'):raise ValueError('t-SNEは新しい行への変換を定義しません。新しいデータで別の実験を作成してください')
             return {'embedding':clean(model.transform(features))}

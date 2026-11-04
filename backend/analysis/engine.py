@@ -69,6 +69,12 @@ def recommendations(df,config):
         out.append(dict(s,available=available,recommended=available and s['id'] in fast,reason=reason))
     return out
 
+def normalize_features(X):
+    """学習時と予測時で同じ欠測表現にそろえる（無限大とNone/pd.NAをnp.nanへ）。"""
+    X=X.replace([np.inf,-np.inf],np.nan)
+    for c in X.select_dtypes(exclude='number'):X[c]=X[c].astype(object).where(X[c].notna(),np.nan)
+    return X
+
 SUPERVISED_METRICS={'classification':('accuracy','precision_macro','recall_macro','f1_macro'),'regression':('mae','rmse','r2'),'timeseries':('mae','rmse','r2')}
 UNSUPERVISED_METRICS={'clustering':'silhouette','anomaly':'detected','reduction':'dimensions'}
 def resolve_metric(cfg):
@@ -102,9 +108,8 @@ def prepare(df,cfg):
         if len(features)!=int(np.prod(shape)):raise ValueError('2D画像の縦×横と選択したピクセル列数が一致しません')
         if any(not pd.api.types.is_numeric_dtype(df[c]) or pd.api.types.is_complex_dtype(df[c]) for c in features):raise ValueError('2D画像では数値ピクセル列だけを選択してください')
     if not features and task!='timeseries':raise ValueError('説明変数を1列以上選択してください')
-    X=df[features].copy().replace([np.inf,-np.inf],np.nan)
+    X=normalize_features(df[features].copy())
     if shape:X=X.astype(float)
-    for c in X.select_dtypes(exclude='number'):X[c]=X[c].astype(object).where(X[c].notna(),np.nan)
     labels=None;y=None
     if target in df:
         if task=='classification':
