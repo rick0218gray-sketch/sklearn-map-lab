@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+node_modules/
+dist/
+analysis_data/
+.env
+.env.*
+*.joblib
+*.parquet
+*.log
+examples/*.csv
+verification/analysis_check.json
+catboost_info/

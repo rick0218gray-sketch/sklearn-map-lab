@@ -1,0 +1,20 @@
+body {
+  margin: 0;
+  padding: 24px clamp(16px, 4vw, 56px);
+  background: #f3f6fb;
+  color: #15253b;
+  font-family: system-ui, sans-serif;
+}
+
+main > header {
+  max-width: 1280px;
+  margin: 0 auto 28px;
+}
+
+main > header h1 {
+  margin-bottom: 4px;
+}
+
+.error {
+  color: #9b1c1c;
+}
