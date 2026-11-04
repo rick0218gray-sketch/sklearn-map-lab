@@ -1,0 +1,2 @@
+# テスト専用の追加依存（FastAPIのTestClientが使用）
+httpx
