@@ -7,7 +7,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Literal
-from .engine import profile,recommendations,write_json,read_json,clean,finalize,run_lock
+from .engine import profile,recommendations,write_json,read_json,clean,finalize,run_lock,resolve_metric
 from .catalog import GRAPHS,FAMILIES,SPECS
 ROOT=Path(os.environ.get('SKLEARN_ANALYSIS_DIR',str(Path(__file__).resolve().parents[2]/'analysis_data')));ROOT.mkdir(exist_ok=True,parents=True)
 router=APIRouter(prefix='/api/analysis');jobs={};job_lock=threading.Lock();slots=threading.Semaphore(2)
@@ -127,7 +127,7 @@ def recommend(config:Config):return recommendations(pd.read_parquet(path('data',
 def run(config:Config):
     source=path('data',config.data_id);df=pd.read_parquet(source/'data.parquet')
     from .engine import prepare
-    try:prepare(df,config.model_dump())
+    try:prepare(df,config.model_dump());resolve_metric(config.model_dump())
     except Exception as e:raise HTTPException(400,str(e)) from e
     id=uuid.uuid4().hex;d=ROOT/'runs'/id;d.mkdir(parents=True)
     df.to_parquet(d/'data.parquet',index=False);write_json(d/'config.json',config.model_dump());write_json(d/'result.json',{'id':id,'status':'queued','rows':[],'config':config.model_dump()})

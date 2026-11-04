@@ -69,6 +69,16 @@ def recommendations(df,config):
         out.append(dict(s,available=available,recommended=available and s['id'] in fast,reason=reason))
     return out
 
+SUPERVISED_METRICS={'classification':('accuracy','precision_macro','recall_macro','f1_macro'),'regression':('mae','rmse','r2'),'timeseries':('mae','rmse','r2')}
+UNSUPERVISED_METRICS={'clustering':'silhouette','anomaly':'detected','reduction':'dimensions'}
+def resolve_metric(cfg):
+    """主指標を決める。教師なしは画面で指標を選べないため、残っていた教師あり指標を無視して固定値を使う。"""
+    task=cfg['task']
+    if task in UNSUPERVISED_METRICS:return UNSUPERVISED_METRICS[task]
+    metric=cfg.get('metric') or {'classification':'f1_macro'}.get(task,'mae')
+    if metric not in SUPERVISED_METRICS[task]:raise ValueError('主指標を分類用から選んでください' if task=='classification' else '主指標を回帰用から選んでください')
+    return metric
+
 def prepare(df,cfg):
     task=cfg['task'];target=cfg.get('target');date=cfg.get('date');group=cfg.get('group')
     if task in ('classification','regression','timeseries') and target not in df:raise ValueError('目的変数を選択してください')
@@ -158,9 +168,7 @@ def run_experiment(directory):
         joblib.dump({'df':df,'X':X,'y':y,'dev':dev,'hold':hold,'cv':cv,'labels':labels},directory/'split.joblib')
         rec=recommendations(df,cfg);allowed={s['id'] for s in rec if s['available']};requested=cfg.get('models') or [s['id'] for s in rec if s['recommended']]
         if task in ('classification','regression') and 'dummy' not in requested:requested=['dummy']+requested
-        metric=cfg.get('metric') or {'classification':'f1_macro','regression':'mae','timeseries':'mae','clustering':'silhouette','anomaly':'detected','reduction':'dimensions'}[task]
-        if task=='classification' and metric not in ('accuracy','precision_macro','recall_macro','f1_macro'):raise ValueError('主指標を分類用から選んでください')
-        if task in ('regression','timeseries') and metric not in ('mae','rmse','r2'):raise ValueError('主指標を回帰用から選んでください')
+        metric=resolve_metric(cfg)
         result.update(metric=metric,direction='minimize' if metric in ('mae','rmse') else 'maximize',recommendations=rec)
         for name in dict.fromkeys(requested):
             row={'model':name,'status':'running','cv_scores':[]};result['rows'].append(row);write_json(directory/'result.json',result)
