@@ -41,6 +41,15 @@ def path(kind,id):
     if not p.exists():raise HTTPException(404,'記録がありません')
     return p
 
+def stop_run(directory,status,error=None):
+    """実験全体と計算途中の行を同じ停止状態にそろえる。完了済みの行はそのまま残す。"""
+    result=read_json(directory/'result.json')
+    for row in result.get('rows',[]):
+        if row.get('status')=='running':row['status']=status
+    result['status']=status
+    if error:result['error']=error
+    write_json(directory/'result.json',result);return result
+
 def start_worker(directory,mode='run',args=(),timeout=300):
     key=f'{directory.name}:{mode}:'+':'.join(args)
     def work():
@@ -53,14 +62,15 @@ def start_worker(directory,mode='run',args=(),timeout=300):
                 with job_lock:jobs[key]=process
                 try:
                     code=process.wait(timeout=timeout)
-                    if code!=0:
-                        if mode=='run' and not (directory/'cancel').exists():
-                            result=read_json(directory/'result.json');result.update(status='failed',error='分析プロセスが失敗しました。worker.logを確認');write_json(directory/'result.json',result)
+                    if mode=='run' and (directory/'cancel').exists():
+                        # 停止要求後にワーカーが書いた途中状態を上書きし、画面が計算中のまま残らないようにする。
+                        if read_json(directory/'result.json').get('status')!='completed':stop_run(directory,'cancelled')
+                    elif code!=0:
+                        if mode=='run':stop_run(directory,'failed','分析プロセスが失敗しました。worker.logを確認')
                         elif mode=='graph':write_json(directory/'graphs'/args[0]/f'{args[1]}.json',{'id':args[1],'status':'failed','reason':'描画プロセスが終了しました。ログを確認してください'})
                 except subprocess.TimeoutExpired:
                     process.terminate();process.wait(timeout=10)
-                    if mode=='run':
-                        result=read_json(directory/'result.json');result.update(status='timed_out',error=f'上限{timeout}秒で停止。完了した結果は保持');write_json(directory/'result.json',result)
+                    if mode=='run':stop_run(directory,'timed_out',f'上限{timeout}秒で停止。完了した結果は保持')
                     else:
                         write_json(directory/'graphs'/args[0]/f'{args[1]}.json',{'id':args[1],'status':'timed_out','reason':f'{timeout}秒で停止'})
                 finally:
@@ -145,11 +155,13 @@ def get_run(id:str):
     return result
 @router.post('/runs/{id}/cancel')
 def cancel(id:str):
-    d=path('runs',id);(d/'cancel').touch()
+    d=path('runs',id);result=read_json(d/'result.json')
+    if result.get('status') not in ('queued','running'):return result
+    (d/'cancel').touch()
     with job_lock:
         for key,process in list(jobs.items()):
             if key.startswith(id+':run:'):process.terminate()
-    result=read_json(d/'result.json');result.update(status='cancelled');write_json(d/'result.json',result);return result
+    return stop_run(d,'cancelled')
 class Decision(BaseModel):
     model:str
     status:Literal['adopted','pending','rejected']='adopted'

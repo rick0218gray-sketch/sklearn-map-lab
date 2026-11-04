@@ -171,8 +171,8 @@ def run_experiment(directory):
         metric=resolve_metric(cfg)
         result.update(metric=metric,direction='minimize' if metric in ('mae','rmse') else 'maximize',recommendations=rec)
         for name in dict.fromkeys(requested):
-            row={'model':name,'status':'running','cv_scores':[]};result['rows'].append(row);write_json(directory/'result.json',result)
             if (directory/'cancel').exists():result['status']='cancelled';break
+            row={'model':name,'status':'running','cv_scores':[]};result['rows'].append(row);write_json(directory/'result.json',result)
             if name not in allowed:row.update(status='not_applicable',reason=next((s['reason'] for s in rec if s['id']==name),'未登録モデル'));continue
             try:
                 start=time.perf_counter();pred=np.full(len(dev),np.nan);prob=None;foldmetrics=[];search=[]
