@@ -7,7 +7,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Literal
-from .engine import profile,recommendations,write_json,read_json,clean,finalize,run_lock
+from .engine import profile,recommendations,write_json,read_json,clean,finalize,run_lock,normalize_features,resolve_metric
 from .catalog import GRAPHS,FAMILIES,SPECS
 ROOT=Path(os.environ.get('SKLEARN_ANALYSIS_DIR',str(Path(__file__).resolve().parents[2]/'analysis_data')));ROOT.mkdir(exist_ok=True,parents=True)
 router=APIRouter(prefix='/api/analysis');jobs={};job_lock=threading.Lock();slots=threading.Semaphore(2)
@@ -41,6 +41,15 @@ def path(kind,id):
     if not p.exists():raise HTTPException(404,'記録がありません')
     return p
 
+def stop_run(directory,status,error=None):
+    """実験全体と計算途中の行を同じ停止状態にそろえる。完了済みの行はそのまま残す。"""
+    result=read_json(directory/'result.json')
+    for row in result.get('rows',[]):
+        if row.get('status')=='running':row['status']=status
+    result['status']=status
+    if error:result['error']=error
+    write_json(directory/'result.json',result);return result
+
 def start_worker(directory,mode='run',args=(),timeout=300):
     key=f'{directory.name}:{mode}:'+':'.join(args)
     def work():
@@ -53,14 +62,15 @@ def start_worker(directory,mode='run',args=(),timeout=300):
                 with job_lock:jobs[key]=process
                 try:
                     code=process.wait(timeout=timeout)
-                    if code!=0:
-                        if mode=='run' and not (directory/'cancel').exists():
-                            result=read_json(directory/'result.json');result.update(status='failed',error='分析プロセスが失敗しました。worker.logを確認');write_json(directory/'result.json',result)
+                    if mode=='run' and (directory/'cancel').exists():
+                        # 停止要求後にワーカーが書いた途中状態を上書きし、画面が計算中のまま残らないようにする。
+                        if read_json(directory/'result.json').get('status')!='completed':stop_run(directory,'cancelled')
+                    elif code!=0:
+                        if mode=='run':stop_run(directory,'failed','分析プロセスが失敗しました。worker.logを確認')
                         elif mode=='graph':write_json(directory/'graphs'/args[0]/f'{args[1]}.json',{'id':args[1],'status':'failed','reason':'描画プロセスが終了しました。ログを確認してください'})
                 except subprocess.TimeoutExpired:
                     process.terminate();process.wait(timeout=10)
-                    if mode=='run':
-                        result=read_json(directory/'result.json');result.update(status='timed_out',error=f'上限{timeout}秒で停止。完了した結果は保持');write_json(directory/'result.json',result)
+                    if mode=='run':stop_run(directory,'timed_out',f'上限{timeout}秒で停止。完了した結果は保持')
                     else:
                         write_json(directory/'graphs'/args[0]/f'{args[1]}.json',{'id':args[1],'status':'timed_out','reason':f'{timeout}秒で停止'})
                 finally:
@@ -127,7 +137,7 @@ def recommend(config:Config):return recommendations(pd.read_parquet(path('data',
 def run(config:Config):
     source=path('data',config.data_id);df=pd.read_parquet(source/'data.parquet')
     from .engine import prepare
-    try:prepare(df,config.model_dump())
+    try:prepare(df,config.model_dump());resolve_metric(config.model_dump())
     except Exception as e:raise HTTPException(400,str(e)) from e
     id=uuid.uuid4().hex;d=ROOT/'runs'/id;d.mkdir(parents=True)
     df.to_parquet(d/'data.parquet',index=False);write_json(d/'config.json',config.model_dump());write_json(d/'result.json',{'id':id,'status':'queued','rows':[],'config':config.model_dump()})
@@ -145,11 +155,13 @@ def get_run(id:str):
     return result
 @router.post('/runs/{id}/cancel')
 def cancel(id:str):
-    d=path('runs',id);(d/'cancel').touch()
+    d=path('runs',id);result=read_json(d/'result.json')
+    if result.get('status') not in ('queued','running'):return result
+    (d/'cancel').touch()
     with job_lock:
         for key,process in list(jobs.items()):
             if key.startswith(id+':run:'):process.terminate()
-    result=read_json(d/'result.json');result.update(status='cancelled');write_json(d/'result.json',result);return result
+    return stop_run(d,'cancelled')
 class Decision(BaseModel):
     model:str
     status:Literal['adopted','pending','rejected']='adopted'
@@ -221,7 +233,7 @@ def predict(id:str,body:Predict):
     missing=set(meta['features'])-set(frame.columns)
     if missing:raise HTTPException(400,f'不足列：{sorted(missing)}')
     try:
-        features=frame[meta['features']]
+        features=normalize_features(frame[meta['features']].copy())
         if config['task']=='reduction':
             if not hasattr(model.named_steps['model'],'transform'):raise ValueError('t-SNEは新しい行への変換を定義しません。新しいデータで別の実験を作成してください')
             return {'embedding':clean(model.transform(features))}

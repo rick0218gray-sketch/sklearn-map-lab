@@ -1,5 +1,7 @@
 # sklearn-map-lab
 
+[![CI](https://github.com/rick0218gray-sketch/sklearn-map-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/rick0218gray-sketch/sklearn-map-lab/actions/workflows/ci.yml)
+
 表データを取り込み、機械学習モデルを同じ分割で比較して、採用した理由と最終テストの結果を記録するローカルWebアプリです。Codexを活用して個人開発しました。
 
 **English summary.** A local web app that profiles tabular data, compares machine-learning models on shared splits, and records the selection rationale before holdout evaluation. It is a personal project built with Codex. All figures below come from synthetic data.
@@ -8,7 +10,7 @@
 | --- | --- |
 | 作ったもの | データ診断、候補モデルの選定、交差検証での比較、採用理由の記録、最終テスト、新しい行の予測を1画面でつなぐアプリ（Python、FastAPI、React、scikit-learn、PyTorch） |
 | 担当 | 個人開発。実装にCodexを活用しました。公開版は既存のローカルアプリからデータ取り込みと自動分析の機能を切り出した新規履歴で、手書きとCodex生成の内訳を行単位で示す記録はありません |
-| 動作の確かめ方 | バックエンド14テスト、本番ビルド、実ブラウザでの操作、全モデル・全グラフの実行を2026-11-05に再実行し、すべて成功（[検証](#検証)） |
+| 動作の確かめ方 | バックエンド14テスト、本番ビルド、実ブラウザでの操作、全モデル・全グラフの実行を2026-11-05に再実行し、すべて成功（[検証](#検証)）。テストはその後30件に増やし、GitHub Actionsで毎回実行 |
 | 数値の範囲 | 掲載する数値はすべて合成データでの動作確認の値です。実データでの性能は評価していません |
 
 ## 動作画面
@@ -40,6 +42,22 @@ Reactが設定入力と結果表示を担当し、FastAPIがデータ取り込�
 | [backend/analysis/engine.py](backend/analysis/engine.py) | データ分割、モデル比較、採用後の最終評価 |
 | [backend/analysis/graphs.py](backend/analysis/graphs.py) | 診断グラフの条件判定と描画 |
 
+### ディレクトリ構成
+
+```text
+backend/
+  main.py                  FastAPIアプリ。frontend/dist があれば静的配信
+  analysis/                取り込み・分割・学習・評価・描画の本体
+  tests/                   unittestのテスト（test_analysis.py、test_core.py）
+  requirements-analysis.txt  実行に必要な依存パッケージ
+  requirements-test.txt      テスト専用の追加依存（httpx）
+frontend/                  Vite + Reactの画面（src/AutoAnalysis.jsx）
+examples/make_demo.py      合成データのデモCSVを生成
+verification/              READMEの値の再現と全モデル・全グラフの実行確認
+docs/                      README掲載の画面画像
+.github/workflows/ci.yml   GitHub Actions（バックエンドのテストとフロントエンドのビルド）
+```
+
 ## セットアップ
 
 Python 3.12とNode.js 24で検証しました。リポジトリのルートから実行します。依存パッケージにPyTorchなどを含むため、インストールには時間がかかります。
@@ -56,7 +74,24 @@ python examples/make_demo.py examples/demo.csv
 python -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000
 ```
 
-ブラウザで `http://127.0.0.1:8000/` を開き、`examples/demo.csv` を取り込みます。目的変数 `target` と分類は自動で候補に入ります。「おすすめで比較を実行」を選び、比較結果からモデルを選んで理由を保存し、最終テストを実行します。起動にAPIキーは不要です。保存先は環境変数 `SKLEARN_ANALYSIS_DIR` で指定できます。
+`python -m venv` は環境によって `python3 -m venv` です。ブラウザで `http://127.0.0.1:8000/` を開き、`examples/demo.csv` を取り込みます。目的変数 `target` と分類は自動で候補に入ります。「おすすめで比較を実行」を選び、比較結果からモデルを選んで理由を保存し、最終テストを実行します。起動にAPIキーは不要です。保存先は環境変数 `SKLEARN_ANALYSIS_DIR` で指定できます。
+
+## テストの実行
+
+テストと再現スクリプトには、上の依存に加えてテスト用の依存が必要です。
+
+```sh
+python -m pip install -r backend/requirements-test.txt
+cd backend
+python -m unittest discover -s tests -v
+cd ..
+python verification/reproduce_demo.py
+python verification/check_analysis.py
+```
+
+`check_analysis.py` は全モデル・全グラフを実行するため数分かかります。結果は `verification/analysis_check.json`（Git管理外）に書き出します。
+
+GitHub Actions（[.github/workflows/ci.yml](.github/workflows/ci.yml)）は、pushとpull requestのたびにUbuntu・Python 3.12でバックエンドのテストを、Node.js 24で `npm ci` と `npm run build` を実行します。
 
 ## 検証
 
@@ -70,7 +105,9 @@ python -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000
 | 実ブラウザ | セットアップ後に画面を操作 | 120行の取り込み、5モデル比較、判断の保存、最終テスト24行、3行の予測を確認 |
 | 全モデル・全グラフ | `python verification/check_analysis.py` | 6タスクの合成データで65のタスク・モデルの組合せがすべて完了し、95種類のグラフをすべて描画 |
 
-テストと再現スクリプトの実行前に `python -m pip install httpx` が必要です。テストはCSV（CP932）・Excelの取り込み、欠測や分割条件の拒否、fold内の前処理、最終テストの二重評価防止、保存失敗からの復旧、時系列、2D CNN、取り込みからZIP出力までの通し動作をカバーします。
+テストと再現スクリプトの実行方法は[テストの実行](#テストの実行)を参照してください。テストはCSV（CP932）・Excelの取り込み、欠測や分割条件の拒否、fold内の前処理、最終テストの二重評価防止、保存失敗からの復旧、時系列、2D CNN、取り込みからZIP出力までの通し動作をカバーします。
+
+上表のWindowsでの記録は14テストの時点のものです。その後 `backend/tests/test_core.py` を追加し、ランダム・グループ・時間順の各分割で最終テストと交差検証が重ならないこと、指標の計算、主指標の検証、停止時の状態、予測時の欠測の扱いを確認しています（計30テスト）。Linux（Python 3.12.3、Node.js 24.22）で、セットアップ手順（サーバー起動とAPIからの取り込みまで。画面操作は除く）、30テスト、本番ビルド、`reproduce_demo.py`（下表と同じ値）、`check_analysis.py`（65組合せ・95グラフ）がすべて成功することを確認しました。
 
 | 合成データ120行の結果 | マクロF1 |
 | --- | --- |
